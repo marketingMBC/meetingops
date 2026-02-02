@@ -1,0 +1,129 @@
+// MeetingOps Database Schema
+// Using SQLite for MVP - easy to migrate to Postgres later
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Workflow definitions (React Flow JSON)
+model Workflow {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  flowJson    String   // React Flow nodes/edges as JSON
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  runs WorkflowRun[]
+}
+
+// Workflow execution history
+model WorkflowRun {
+  id         String   @id @default(uuid())
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id])
+
+  status     String   // pending | running | completed | failed
+  trigger    String   // manual | notion_poll | slack_command | scheduler
+
+  inputData  String?  // JSON - input that triggered the run
+  outputData String?  // JSON - final output
+  logs       String?  // JSON array of log entries
+  error      String?  // Error message if failed
+
+  startedAt  DateTime @default(now())
+  completedAt DateTime?
+}
+
+// Slack channels configured for daily check-ins
+model SlackChannelConfig {
+  id          String   @id @default(uuid())
+  channelId   String   @unique
+  channelName String
+  isActive    Boolean  @default(true)
+  timezone    String   @default("America/Santiago")
+  checkInTime String   @default("19:00") // 24h format
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  checkIns DailyCheckIn[]
+}
+
+// Track processed meetings to avoid duplicates
+model ProcessedMeeting {
+  id              String   @id @default(uuid())
+  notionPageId    String   @unique
+  notionPageTitle String
+  processedAt     DateTime @default(now())
+  tasksCreated    Int      @default(0)
+  workflowRunId   String?
+}
+
+// Track processed Slack threads to avoid duplicate task creation
+model ProcessedSlackThread {
+  id           String   @id @default(uuid())
+  channelId    String
+  threadTs     String
+  processedAt  DateTime @default(now())
+  tasksCreated Int      @default(0)
+
+  @@unique([channelId, threadTs])
+}
+
+// Map between Slack text and Notion tasks for matching
+model TaskMapping {
+  id            String   @id @default(uuid())
+  notionTaskId  String
+  notionTaskTitle String
+
+  // Normalized text for matching (lowercase, cleaned)
+  normalizedTitle String
+
+  // Owner info
+  ownerName     String?
+  ownerSlackId  String?
+
+  status        String   @default("todo") // todo | doing | done
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Daily check-in records
+model DailyCheckIn {
+  id          String   @id @default(uuid())
+  channelId   String
+  channel     SlackChannelConfig @relation(fields: [channelId], references: [channelId])
+
+  messageTs   String   // Slack message timestamp
+  date        DateTime @default(now())
+
+  // Collected responses
+  responses   DailyCheckInResponse[]
+}
+
+model DailyCheckInResponse {
+  id          String   @id @default(uuid())
+  checkInId   String
+  checkIn     DailyCheckIn @relation(fields: [checkInId], references: [id])
+
+  userId      String
+  userName    String
+  responseText String
+  responseTs  String   // Slack thread reply timestamp
+
+  // Parsed completed/pending items
+  completedItems String? // JSON array
+  pendingItems   String? // JSON array
+
+  // Matched tasks (Notion task IDs that were marked done)
+  matchedTasks   String? // JSON array of notionTaskIds
+
+  createdAt   DateTime @default(now())
+}
